@@ -38,9 +38,9 @@ import { isNetdiskSource } from '@/lib/netdisk/source';
 import {
   base58Decode,
   clearBangumiImageFallbackCacheIfFailed,
+  ensureBangumiImagePrimaryProbed,
   getBangumiImageFallbackUrl,
   getDoubanImageFallbackUrl,
-  markBangumiImageFallbackActive,
   processImageUrl,
   tryApplyBangumiImageFallback,
   tryApplyDoubanImageFallback,
@@ -226,44 +226,24 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
       setDisplayPoster(processedPoster);
     }, [processedPoster]);
 
-    const bangumiImageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-      null
-    );
-
+    // 主源图片域主页探测：失败写 sticky 后切备源海报（替代原 5s 强制降级）
     useEffect(() => {
-      if (bangumiImageTimeoutRef.current) {
-        clearTimeout(bangumiImageTimeoutRef.current);
-        bangumiImageTimeoutRef.current = null;
-      }
-
       if (!actualPoster) return;
 
-      const bangumiFallbackPoster = getBangumiImageFallbackUrl(actualPoster);
-      if (!bangumiFallbackPoster || displayPoster === bangumiFallbackPoster) {
-        return;
-      }
-
-      bangumiImageTimeoutRef.current = setTimeout(() => {
-        markBangumiImageFallbackActive();
-        setDisplayPoster((current) =>
-          current === bangumiFallbackPoster ? current : bangumiFallbackPoster
-        );
-      }, 5000);
+      let cancelled = false;
+      void (async () => {
+        const reachable = await ensureBangumiImagePrimaryProbed();
+        if (cancelled || reachable) return;
+        const bangumiFallbackPoster = getBangumiImageFallbackUrl(actualPoster);
+        if (bangumiFallbackPoster) {
+          setDisplayPoster(bangumiFallbackPoster);
+        }
+      })();
 
       return () => {
-        if (bangumiImageTimeoutRef.current) {
-          clearTimeout(bangumiImageTimeoutRef.current);
-          bangumiImageTimeoutRef.current = null;
-        }
+        cancelled = true;
       };
-    }, [actualPoster, displayPoster]);
-
-    const clearBangumiImageTimeout = useCallback(() => {
-      if (bangumiImageTimeoutRef.current) {
-        clearTimeout(bangumiImageTimeoutRef.current);
-        bangumiImageTimeoutRef.current = null;
-      }
-    }, []);
+    }, [actualPoster]);
 
     useImperativeHandle(ref, () => ({
       setEpisodes: (eps?: number) => setDynamicEpisodes(eps),
@@ -1017,7 +997,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                 loading='lazy'
                 onLoadingComplete={() => {
                   setIsLoading(true);
-                  clearBangumiImageTimeout();
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1031,7 +1010,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                     doubanFallbackPoster &&
                     tryApplyDoubanImageFallback(img, actualPoster)
                   ) {
-                    clearBangumiImageTimeout();
                     setDisplayPoster(doubanFallbackPoster);
                     return;
                   }
@@ -1042,7 +1020,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                     bangumiFallbackPoster &&
                     tryApplyBangumiImageFallback(img, actualPoster)
                   ) {
-                    clearBangumiImageTimeout();
                     setDisplayPoster(bangumiFallbackPoster);
                     return;
                   }
@@ -1050,7 +1027,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                   if (
                     clearBangumiImageFallbackCacheIfFailed(img, actualPoster)
                   ) {
-                    clearBangumiImageTimeout();
                     setDisplayPoster(processedPoster);
                     return;
                   }
